@@ -1,0 +1,222 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": null
+    },
+    "exported_at": "2026-10-09T15:42:22+00:00",
+    "name": "Project Reclaimer (Halo 3)",
+    "author": "86576924+rcburke92@users.noreply.github.com",
+    "description": "Project Reclaimer dedicated servers for Halo 3 (Halo: The Master Chief Collection), run under Wine. Needs Halo 3's files from your own MCC copy, uploaded into game/. https://projectreclaimer.dev/host",
+    "features": null,
+    "docker_images": {
+        "Wine Stable": "ghcr.io/parkervcp/yolks:wine_latest"
+    },
+    "file_denylist": [],
+    "startup": "bash ./reclaimer-start.sh",
+    "config": {
+        "files": "{}",
+        "startup": "{\"done\": \"dedicated check passed: starting Project Reclaimer\"}",
+        "logs": "{}",
+        "stop": "^C"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/bash\n# Project Reclaimer (Halo 3) dedicated server: Pterodactyl install script.\n# Runs as root in the installer container with the server folder at\n# /mnt/server. Downloads the Windows dedicated server build from GitHub\n# releases, verifies it against the release's SHA256SUMS.txt and writes\n# the start script. Reinstalling updates the executable and start script\n# and keeps dedicated.toml, game/, content/, playlists/, bans.json and data/.\n#\n# The game files are NOT downloaded: Halo 3's files come from your own copy\n# of Halo: The Master Chief Collection and are uploaded into game/.\nset -euo pipefail\n\nREPO=ProjectReclaimer/project-reclaimer-releases\nSERVER_DIR=${INSTALL_DIR:-/mnt/server}\n\nsay() { printf '[install] %s\\n' \"$*\"; }\nfail() {\n    say \"Error: $*\"\n    exit 1\n}\n\nif ! command -v curl > /dev/null || ! command -v sha256sum > /dev/null; then\n    apt-get update -qq\n    apt-get install -y -qq --no-install-recommends curl ca-certificates coreutils\nfi\n\nmkdir -p \"$SERVER_DIR\"\ncd \"$SERVER_DIR\"\n\nversion=${RECLAIMER_VERSION:-latest}\nif [ -z \"$version\" ] || [ \"$version\" = latest ]; then\n    release=$(curl -fsSL \"https://api.github.com/repos/$REPO/releases/latest\") ||\n        fail \"could not reach the GitHub API for $REPO\"\n    tag=$(printf '%s\\n' \"$release\" | grep -m1 '\"tag_name\"' |\n        sed -E 's/.*\"tag_name\"[[:space:]]*:[[:space:]]*\"([^\"]+)\".*/\\1/' || true)\n    [ -n \"$tag\" ] || fail \"could not find the latest release of $REPO\"\nelse\n    tag=\"v${version#v}\"\nfi\nsay \"Project Reclaimer $tag\"\n\nbase=\"https://github.com/$REPO/releases/download/$tag\"\nsums=$(curl -fsSL \"$base/SHA256SUMS.txt\") || fail \"release $tag not found (no $base/SHA256SUMS.txt)\"\n\n# The dedicated-only build exists from 0.8.14; older releases have only the\n# full client, which runs dedicated servers too.\nasset=\"\"\nfor candidate in \"project-reclaimer-dedicated-$tag.exe\" \"project-reclaimer-$tag.exe\"; do\n    if printf '%s\\n' \"$sums\" | grep -q \"[ *]$candidate\\$\"; then\n        asset=$candidate\n        break\n    fi\ndone\n[ -n \"$asset\" ] || fail \"release $tag has no Windows server executable\"\nexpected=$(printf '%s\\n' \"$sums\" | grep \"[ *]$asset\\$\" | head -n 1 | cut -d ' ' -f 1)\n\nsay \"Downloading $asset...\"\ncurl -fL --retry 3 -o project-reclaimer.exe.new \"$base/$asset\"\nactual=$(sha256sum project-reclaimer.exe.new | cut -d ' ' -f 1)\nif [ \"$actual\" != \"$expected\" ]; then\n    rm -f project-reclaimer.exe.new\n    fail \"checksum mismatch for $asset (expected $expected, got $actual)\"\nfi\nmv -f project-reclaimer.exe.new project-reclaimer.exe\nprintf '%s\\n' \"$tag\" > .reclaimer-version\nsay \"Verified SHA-256 $actual\"\n\nmkdir -p game/halo3/maps\ncat > game/PUT_HALO3_FILES_HERE.txt << 'README'\nHalo 3's game files go in this folder, copied from your own Steam copy of\nHalo: The Master Chief Collection (with Halo 3 and its campaign installed).\n\nEasiest way: on a Windows PC with the game, download project-reclaimer.exe from\nhttps://projectreclaimer.dev and run\n\n    .\\project-reclaimer.exe dedicated init C:\\reclaimer --from\n\n(add --maps \"Guardian,Valhalla\" to copy only some maps), then upload the\ncontents of C:\\reclaimer\\game into this folder over SFTP, keeping the folders:\n\n    game/halo3/halo3.dll\n    game/halo3/maps/shared.map\n    game/halo3/maps/campaign.map\n    game/halo3/maps/040_voi.map\n    game/halo3/maps/<the multiplayer maps you host>.map\n    ...\n\nThe server checks every 15 seconds while it waits, and starts once\n`dedicated check` passes. You can delete this file.\nREADME\n\ncat > reclaimer-start.sh << 'START_SH'\n#!/bin/bash\n# Project Reclaimer (Halo 3) dedicated server: Pterodactyl start script.\n# Written into the server folder by the egg's installer; reinstalling the\n# server rewrites it. Mirrors the official Docker image's entrypoint:\n#   1. make the Wine prefix (first start only)\n#   2. make the server folder with `dedicated init` (first start only)\n#   3. point the first [[server]] at this server's Pterodactyl allocation\n#   4. wait until `dedicated check` passes, then run the servers\nset -euo pipefail\nSERVER_DIR=${HOME:-/home/container}\ncd \"$SERVER_DIR\"\n\nEXE=\"$SERVER_DIR/project-reclaimer.exe\"\nCHECK_INTERVAL=15\n\nsay() { printf '[egg] %s\\n' \"$*\"; }\nfail() {\n    say \"Error: $*\"\n    exit 1\n}\n\n[ -f \"$EXE\" ] || fail \"$EXE is missing. Reinstall the server from the panel's Settings tab.\"\n\n# The yolk's entrypoint starts Xvfb on :0 when XVFB=1.\nif [ \"${XVFB:-1}\" != 1 ]; then\n    unset DISPLAY\nfi\n\n# 1. Wine prefix. No audio driver: the servers play no sound, and without\n# a sound card Wine's ALSA driver fills the log with errors.\nif [ ! -f \"$WINEPREFIX/system.reg\" ]; then\n    say \"Creating the Wine prefix in $WINEPREFIX (first start only)...\"\n    WINEARCH=win64 wineboot --init > .wine-init.log 2>&1 || {\n        cat .wine-init.log\n        fail \"wineboot failed\"\n    }\n    wine reg add 'HKCU\\Software\\Wine\\Drivers' /v Audio /t REG_SZ /f >> .wine-init.log 2>&1 || true\n    wineserver --wait\nfi\n\n# 2. Server folder: a commented dedicated.toml, playlists/, content/,\n# bans.json and data/. Never touches an existing dedicated.toml.\nif [ ! -f dedicated.toml ]; then\n    say \"No dedicated.toml yet: creating the server folder...\"\n    wine \"$EXE\" dedicated init .\n    say \"Created dedicated.toml. Edit it in the File Manager to name the server and pick maps or a playlist.\"\nfi\n\n# 3. The first [[server]] block's port follows the primary allocation, so\n# players reach it through the port Pterodactyl forwards. Other [[server]]\n# blocks are left alone: give each its own allocation and port by hand.\nif [ \"${EGG_SYNC_PORT:-1}\" = 1 ] && [ -n \"${SERVER_PORT:-}\" ]; then\n    awk -v port=\"$SERVER_PORT\" '\n        function finish() {\n            if (in_first && !done) { print \"port = \" port; done = 1 }\n            in_first = 0\n        }\n        /^[[:space:]]*\\[\\[[[:space:]]*server[[:space:]]*\\]\\]/ {\n            finish()\n            blocks++\n            print\n            if (blocks == 1) in_first = 1\n            next\n        }\n        /^[[:space:]]*\\[/ { finish(); print; next }\n        in_first && /^[[:space:]]*port[[:space:]]*=/ {\n            if (!done) { print \"port = \" port; done = 1 }\n            next\n        }\n        { print }\n        END { finish() }\n    ' dedicated.toml > .dedicated.toml.egg\n    if cmp -s dedicated.toml .dedicated.toml.egg; then\n        rm -f .dedicated.toml.egg\n    else\n        cat .dedicated.toml.egg > dedicated.toml\n        rm -f .dedicated.toml.egg\n        say \"Set the first [[server]]'s port in dedicated.toml to $SERVER_PORT (this server's allocation).\"\n    fi\nfi\n\n# 4. Wait for the game files and settings to check out. Upload Halo 3's\n# files into game/ over SFTP while this waits; no restart needed.\nlast=\"\"\nwhile ! report=$(wine \"$EXE\" dedicated check 2>&1); do\n    if [ \"$report\" != \"$last\" ]; then\n        printf '%s\\n\\n' \"$report\"\n        say \"Waiting for 'dedicated check' to pass. Fix the above in the File Manager or over SFTP.\"\n        say \"Halo 3's files go in game/ (game/halo3/halo3.dll, game/halo3/maps/shared.map, the maps you host, campaign.map, 040_voi.map).\"\n        say \"Checking again every ${CHECK_INTERVAL} seconds.\"\n        last=$report\n    fi\n    sleep \"$CHECK_INTERVAL\"\ndone\nprintf '%s\\n' \"$report\"\n\nargs=(dedicated)\nif [ \"${VERBOSE:-0}\" = 1 ]; then\n    args+=(--verbose)\nfi\n\n# 5. Panel console: each line typed there goes to the first server's\n# remote console (Source RCON at 127.0.0.1:<its game port>), so it works\n# with RCON closed to the internet. Needs an RCON password.\n\n# The RCON Password variable, else [rcon] password from dedicated.toml.\nrcon_password() {\n    if [ -n \"${RECLAIMER_DEDICATED_RCON_PASSWORD:-}\" ]; then\n        printf '%s' \"$RECLAIMER_DEDICATED_RCON_PASSWORD\"\n        return\n    fi\n    awk '\n        /^[[:space:]]*\\[/ { in_rcon = ($0 ~ /^[[:space:]]*\\[[[:space:]]*rcon[[:space:]]*\\][[:space:]]*(#.*)?$/); next }\n        in_rcon && /^[[:space:]]*password[[:space:]]*=[[:space:]]*\"/ {\n            sub(/^[^=]*=[[:space:]]*\"/, \"\")\n            sub(/\".*$/, \"\")\n            print\n            exit\n        }\n    ' dedicated.toml\n}\n\nconsole_bridge() {\n    local line password\n    while IFS= read -r line; do\n        line=${line%$'\\r'}\n        [ -n \"${line//[[:space:]]/}\" ] || continue\n        password=$(rcon_password)\n        if [ -z \"$password\" ]; then\n            say \"Console commands need an RCON password: set the RCON Password variable (8-128 characters) and restart.\"\n            continue\n        fi\n        if command -v rcon > /dev/null; then\n            rcon -a \"127.0.0.1:${SERVER_PORT}\" -p \"$password\" \"$line\" 2>&1 ||\n                say \"RCON command failed. Is the server still starting?\"\n        else\n            # shellcheck disable=SC2086 # split the line into the command's words\n            wine \"$EXE\" dedicated rcon $line 2>&1 || say \"RCON command failed.\"\n        fi\n    done\n}\n\n# The egg's \"server started\" marker: keep in sync with config.startup.done.\nsay \"dedicated check passed: starting Project Reclaimer\"\nif [ \"${CONSOLE_RCON:-1}\" = 1 ] && [ -n \"${SERVER_PORT:-}\" ]; then\n    say \"Console commands are sent over RCON, e.g. status, players, kick <player> [reason], map <name>.\"\n    # A background job's stdin is /dev/null unless redirected explicitly.\n    exec 3<&0\n    console_bridge <&3 3<&- &\nfi\n# The server keeps the foreground (and PID for Ctrl+C) as before; the\n# console bridge, not the server, reads the panel's input.\nexec wine \"$EXE\" \"${args[@]}\" < /dev/null 3<&-\nSTART_SH\nchmod +x reclaimer-start.sh\n\nsay \"Done. Start the server; on first start it creates dedicated.toml, then waits for Halo 3's files in game/.\"\n",
+            "container": "ghcr.io/parkervcp/installers:debian",
+            "entrypoint": "bash"
+        }
+    },
+    "variables": [
+        {
+            "name": "Project Reclaimer Version",
+            "description": "Release to install, such as 0.9.5, or latest. Applied when the server is (re)installed. Every player needs the same version as the server.",
+            "env_variable": "RECLAIMER_VERSION",
+            "default_value": "latest",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|regex:/^(latest$)?(v?\\d+\\.\\d+\\.\\d+)?$/",
+            "field_type": "text"
+        },
+        {
+            "name": "Host Name",
+            "description": "Host name shown in the Server Browser. Empty keeps host_name from dedicated.toml.",
+            "env_variable": "RECLAIMER_DEDICATED_HOST_NAME",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:48",
+            "field_type": "text"
+        },
+        {
+            "name": "Server Password",
+            "description": "Password players need to join. Empty keeps dedicated.toml's setting (none by default).",
+            "env_variable": "RECLAIMER_DEDICATED_PASSWORD",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:128",
+            "field_type": "text"
+        },
+        {
+            "name": "Max Players",
+            "description": "Default player limit, 1-63 (campaign co-op is always 16 at most). Empty keeps dedicated.toml's setting (16 by default).",
+            "env_variable": "RECLAIMER_DEDICATED_MAX_PLAYERS",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|integer|between:1,63",
+            "field_type": "text"
+        },
+        {
+            "name": "Admins",
+            "description": "Player IDs with kick and ban rights, separated by commas. Added to the admins in dedicated.toml. A player's ID is in the server log when they join.",
+            "env_variable": "RECLAIMER_DEDICATED_ADMINS",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:2048",
+            "field_type": "text"
+        },
+        {
+            "name": "RCON Password",
+            "description": "Set one (8-128 characters) to turn on the remote console, which the panel console uses to send commands. Empty leaves it off.",
+            "env_variable": "RECLAIMER_DEDICATED_RCON_PASSWORD",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|between:8,128",
+            "field_type": "text"
+        },
+        {
+            "name": "RCON Address",
+            "description": "127.0.0.1 keeps the remote console inside the container (the panel console still works). 0.0.0.0 also opens it to the internet on TCP at this server's port, for the desktop RCON app.",
+            "env_variable": "RECLAIMER_DEDICATED_RCON_ADDRESS",
+            "default_value": "127.0.0.1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:0.0.0.0,127.0.0.1",
+            "field_type": "text"
+        },
+        {
+            "name": "Console Commands Via RCON",
+            "description": "1 sends each line typed in the panel console to the first server's remote console. Needs an RCON password.",
+            "env_variable": "CONSOLE_RCON",
+            "default_value": "1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|in:0,1",
+            "field_type": "text"
+        },
+        {
+            "name": "Public Address",
+            "description": "IPv4 address or DNS name players connect to. Empty detects it (api.ipify.org). Set it when the node's outgoing address differs from the allocation's.",
+            "env_variable": "RECLAIMER_DEDICATED_PUBLIC_ADDRESS",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:253",
+            "field_type": "text"
+        },
+        {
+            "name": "Anti-Cheat",
+            "description": "enforce, detect (log only) or off. Empty keeps dedicated.toml's setting (enforce).",
+            "env_variable": "RECLAIMER_DEDICATED_ANTI_CHEAT",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:enforce,detect,off",
+            "field_type": "text"
+        },
+        {
+            "name": "Block VPNs",
+            "description": "true or false. Empty keeps dedicated.toml's setting (true).",
+            "env_variable": "RECLAIMER_DEDICATED_BLOCK_VPN",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Hidden",
+            "description": "true keeps the server out of the Server Browser (players use Direct Connect). Empty keeps dedicated.toml's setting (false).",
+            "env_variable": "RECLAIMER_DEDICATED_HIDDEN",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Auto Update",
+            "description": "true installs each new Project Reclaimer release and restarts. Otherwise update by reinstalling with version latest.",
+            "env_variable": "RECLAIMER_DEDICATED_AUTO_UPDATE",
+            "default_value": "false",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Local Master Server",
+            "description": "Run this machine's own discovery master. Not needed to be listed: servers always report to the two public masters. If true, add an allocation for Master Port.",
+            "env_variable": "RECLAIMER_DEDICATED_MASTER_ENABLED",
+            "default_value": "false",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Master Port",
+            "description": "TCP port of the local master server, when it is on. Must be one of this server's allocations.",
+            "env_variable": "RECLAIMER_DEDICATED_MASTER_PORT",
+            "default_value": "49175",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|integer|between:1024,65535",
+            "field_type": "text"
+        },
+        {
+            "name": "Servers To Run",
+            "description": "Which [[server]] blocks of dedicated.toml to run: positions, names or ports, such as 1 or 1,2. Each server needs its own UDP allocation.",
+            "env_variable": "RECLAIMER_DEDICATED_ONLY",
+            "default_value": "1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:256",
+            "field_type": "text"
+        },
+        {
+            "name": "Sync Port",
+            "description": "1 sets the first [[server]]'s port in dedicated.toml to this server's primary allocation on every start. 0 leaves dedicated.toml alone.",
+            "env_variable": "EGG_SYNC_PORT",
+            "default_value": "1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|in:0,1",
+            "field_type": "text"
+        },
+        {
+            "name": "Verbose Log",
+            "description": "1 prints everything the servers log, not just joins, leaves, kicks, bans and errors.",
+            "env_variable": "VERBOSE",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|in:0,1",
+            "field_type": "text"
+        },
+        {
+            "name": "Virtual Display",
+            "description": "Runs Wine on a virtual display (Xvfb), as the official Docker image does.",
+            "env_variable": "XVFB",
+            "default_value": "1",
+            "user_viewable": false,
+            "user_editable": false,
+            "rules": "required|string|in:0,1",
+            "field_type": "text"
+        }
+    ]
+}
