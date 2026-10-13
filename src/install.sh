@@ -3,7 +3,7 @@
 # Runs as root in the installer container with the server folder at
 # /mnt/server. Downloads the Windows dedicated server build from GitHub
 # releases, verifies it against the release's SHA256SUMS.txt and writes
-# the start script. Reinstalling updates the executable and start script
+# the start scripts. Reinstalling updates the executable and start scripts
 # and keeps dedicated.toml, game/, content/, playlists/, bans.json and data/.
 #
 # The game files are NOT downloaded: Halo 3's files come from your own copy
@@ -85,6 +85,10 @@ contents of C:\reclaimer\game into this folder over SFTP, keeping the folders:
     game/halo3/maps/<the multiplayer maps you host>.map
     ...
 
+For the Flood Infection mode, also upload halo3/maps/050_floodvoi.map from the
+game's folder. dedicated init doesn't copy it and dedicated check doesn't ask
+for it, but without it a Flood Infection game fails to load.
+
 The server checks every 15 seconds while it waits, and starts once
 `dedicated check` passes. You can delete this file.
 README
@@ -93,5 +97,9 @@ cat > reclaimer-start.sh << 'START_SH'
 @@START_SH@@
 START_SH
 chmod +x reclaimer-start.sh
+
+cat > reclaimer-reserved-slots.py << 'RESERVED_SLOTS_PY'
+@@RESERVED_SLOTS_PY@@
+RESERVED_SLOTS_PY
 
 say "Done. Start the server; on first start it creates dedicated.toml, then waits for Halo 3's files in game/."

@@ -1,4 +1,5 @@
-"""Builds egg-project-reclaimer.json from src/install.sh and src/start.sh.
+"""Builds egg-project-reclaimer.json from src/install.sh, src/start.sh and
+src/reserved_slots.py.
 
 Edit the scripts or the metadata below, then run:  python build_egg.py
 Import the resulting JSON in Pterodactyl under Admin > Nests > Import Egg.
@@ -179,6 +180,50 @@ VARIABLES = [
         "required|string|in:0,1",
     ),
     variable(
+        "Reserved Slots",
+        "RESERVED_SLOTS",
+        "",
+        "Slots only whitelisted players may take, out of the first server's "
+        "max_players. While the public slots are full the server needs the reserved "
+        "password to join. 0 turns this off; empty uses reserved-slots.toml (off "
+        "without one). Needs an RCON password.",
+        "nullable|integer|between:0,62",
+    ),
+    variable(
+        "Reserved Whitelist",
+        "RESERVED_WHITELIST",
+        "",
+        "Player IDs that may use reserved slots, separated by commas. Added to the "
+        "whitelist in reserved-slots.toml. Admins always may.",
+        "nullable|string|max:4096",
+    ),
+    variable(
+        "Reserved Password",
+        "RESERVED_PASSWORD",
+        "",
+        "Join password set while the public slots are full; give it to whitelisted "
+        "players. No spaces. Empty uses reserved-slots.toml.",
+        "nullable|string|max:128|regex:/^\\S*$/",
+    ),
+    variable(
+        "Reserved Bumping",
+        "RESERVED_BUMP",
+        "",
+        "true kicks a player who isn't whitelisted when a whitelisted player is "
+        "refused from the full server, so they can join. Empty uses "
+        "reserved-slots.toml (off without one).",
+        FLAG,
+    ),
+    variable(
+        "Bump Order",
+        "RESERVED_BUMP_ORDER",
+        "",
+        "Who gets bumped first: lowest_score, least_session_time (this visit), "
+        "least_total_time (all visits), separated by commas. Ties go to the newest "
+        "player. Empty uses reserved-slots.toml, else lowest_score,least_session_time.",
+        "nullable|string|max:128",
+    ),
+    variable(
         "Virtual Display",
         "XVFB",
         "1",
@@ -201,6 +246,13 @@ def build() -> dict:
     if "@@START_SH@@" not in install:
         raise SystemExit("src/install.sh is missing the @@START_SH@@ placeholder")
     install = install.replace("@@START_SH@@", start.rstrip("\n"))
+
+    slots = read_script("reserved_slots.py")
+    if "\nRESERVED_SLOTS_PY\n" in f"\n{slots}\n":
+        raise SystemExit("src/reserved_slots.py must not contain a line reading RESERVED_SLOTS_PY")
+    if "@@RESERVED_SLOTS_PY@@" not in install:
+        raise SystemExit("src/install.sh is missing the @@RESERVED_SLOTS_PY@@ placeholder")
+    install = install.replace("@@RESERVED_SLOTS_PY@@", slots.rstrip("\n"))
 
     return {
         "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",

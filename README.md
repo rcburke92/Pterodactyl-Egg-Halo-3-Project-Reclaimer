@@ -21,6 +21,7 @@ A Pterodactyl egg that runs [Project Reclaimer](https://projectreclaimer.dev/hos
       # or only some maps:  --maps "Guardian,Valhalla"
       ```
    2. Upload the contents of `C:\reclaimer\game` into the server's `game/` folder over SFTP (shown in the panel's **Settings** tab), keeping the folder structure: `game/halo3/halo3.dll`, `game/halo3/maps/shared.map`, and so on.
+   3. **Flood Infection only:** also upload `050_floodvoi.map` from MCC's `halo3\maps` into `game/halo3/maps`. The mode loads its Flood bodies from it, `dedicated init` doesn't copy it and `dedicated check` doesn't ask for it. Without it, a vote for a Flood Infection entry passes, the game fails to load and the vote starts over.
 4. **Start the server.** On first start it:
    1. creates the Wine prefix;
    2. runs `dedicated init .` to create `dedicated.toml`, `playlists/`, `content/` and `bans.json`;
@@ -48,6 +49,7 @@ Each `RECLAIMER_DEDICATED_*` variable overrides the same setting in `dedicated.t
 | Servers To Run | `1` | Which `[[server]]` blocks run. The default `dedicated.toml` may contain more than one, and each extra server needs its own allocation and a matching `port` that you set yourself. |
 | Sync Port | `1` | Rewrites the first `[[server]]`'s `port` to the primary allocation on every start. Set `0` to manage the port yourself. |
 | Verbose Log | `0` | `1` passes `--verbose`. |
+| Reserved Slots, Reserved Whitelist, Reserved Password, Reserved Bumping, Bump Order | empty | Empty uses `reserved-slots.toml`. See [Reserved slots](#reserved-slots). |
 
 ## Updating
 
@@ -55,7 +57,7 @@ Each `RECLAIMER_DEDICATED_*` variable overrides the same setting in `dedicated.t
 
 ## Panel console
 
-Set an **RCON Password** and restart. After that, each line you type in the panel console is sent to the first server's remote console on `127.0.0.1:<allocation port>`. It uses `rcon` (gorcon's rcon-cli, which the Wine image includes) and prints the reply. Useful commands:
+Set an **RCON Password** and restart. After that, each line you type in the panel console is sent to the first server's remote console on `127.0.0.1:<allocation port>`. It uses the server's own `dedicated rcon` and prints the reply in full, long `players` lists included. Quote player names that contain spaces. Useful commands:
 
 ```
 status                      server info, players, current game
@@ -72,8 +74,35 @@ Notes:
 
 - RCON only answers once the server is up, so commands typed during first start fail.
 - The password comes from the RCON Password variable, or from `[rcon] password` in `dedicated.toml`.
-- Only the first server is reached. A server with its own `rcon_port` or `rcon_password` in `dedicated.toml` won't match.
+- Only the first `[[server]]` in `dedicated.toml` is reached.
 - The `dedicated ban`, `dedicated bans` and `dedicated vpn …` CLI commands aren't RCON commands. Use the RCON `ban`/`unban` above, in-game `/ban`, or edit `bans.json`.
+
+## Reserved slots
+
+Keeps slots free for whitelisted players, such as the server's owner, on the first `[[server]]`. It runs beside the server and works through RCON, so it needs an **RCON Password**.
+
+Settings go in `reserved-slots.toml` beside `dedicated.toml`, which the Halo 3 Server Manager writes, or in the **Reserved …** egg variables. A variable that isn't empty overrides the file, and **Reserved Whitelist** adds to the file's whitelist.
+
+```toml
+slots = 1                     # 0 turns reserved slots off
+password = "only-for-vips"    # no spaces
+whitelist = ["<64-character player ID>"]
+bump = false
+bump_order = ["lowest_score", "least_session_time"]
+```
+
+1. Set `max_players` in `dedicated.toml` (or **Max Players**) to the public slots plus the reserved ones. For 15 public slots and 1 reserved, use `16`.
+2. Set `slots` and `password`. Keep **Server Password** and `password` in `dedicated.toml` empty.
+3. Add player IDs to `whitelist`. Admins are always whitelisted. Players find their ID under **Settings → Connectivity → Your player ID**.
+4. Restart. The console prints `[slots] 1 of 16 slots reserved for …`.
+
+How it behaves:
+
+- Once players who aren't whitelisted fill the public slots, the server gets the reserved password and shows as **PRIVATE**. Other players are asked for the password instead of being kicked. Whitelisted players enter it and join. When a public slot frees up, the password comes off.
+- A player who isn't whitelisted and still gets into a reserved slot is kicked, newest first. That covers a leaked password, or two players joining at the same moment.
+- `bump = true`: when the server is completely full and a whitelisted player is refused, one player who isn't whitelisted is kicked, and the server stays locked for a minute so the whitelisted player can join again. `bump_order` picks who goes first: `lowest_score` (in the game being played; everyone ties in the lobby), `least_session_time` (this visit), `least_total_time` (all visits, kept in `data/reserved-slots-playtime.json`). Ties go to the newest player.
+- Kicks from reserved slots and bumps are normal kicks: the kicked player can't rejoin for 10 minutes, longer after repeated kicks.
+- Split-screen players count toward the slots, as they do for `max_players`.
 
 ## Things that work differently from the official Docker setup
 
@@ -94,7 +123,8 @@ Notes:
 | [egg-project-reclaimer.json](egg-project-reclaimer.json) | The egg to import. Generated; don't edit by hand. |
 | [src/install.sh](src/install.sh) | Install script: downloads and verifies the exe, writes the start script. |
 | [src/start.sh](src/start.sh) | Start script, installed as `reclaimer-start.sh` in the server folder. |
-| [build_egg.py](build_egg.py) | Builds the egg JSON from the two scripts. Egg variables and metadata live here. |
+| [src/reserved_slots.py](src/reserved_slots.py) | Reserved slots, installed as `reclaimer-reserved-slots.py` and started by the start script. |
+| [build_egg.py](build_egg.py) | Builds the egg JSON from the scripts. Egg variables and metadata live here. |
 
 After editing anything in `src/` or `build_egg.py`, run `python build_egg.py` (Python 3), commit the regenerated JSON, then re-import the egg (or use **Update** on the existing egg).
 

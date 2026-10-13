@@ -86,7 +86,7 @@ while ! report=$(wine "$EXE" dedicated check 2>&1); do
     if [ "$report" != "$last" ]; then
         printf '%s\n\n' "$report"
         say "Waiting for 'dedicated check' to pass. Fix the above in the File Manager or over SFTP."
-        say "Halo 3's files go in game/ (game/halo3/halo3.dll, game/halo3/maps/shared.map, the maps you host, campaign.map, 040_voi.map)."
+        say "Halo 3's files go in game/ (game/halo3/halo3.dll, game/halo3/maps/shared.map, the maps you host, campaign.map, 040_voi.map; 050_floodvoi.map for Flood Infection)."
         say "Checking again every ${CHECK_INTERVAL} seconds."
         last=$report
     fi
@@ -120,23 +120,42 @@ rcon_password() {
     ' dedicated.toml
 }
 
+# The first [[server]]'s name, so `dedicated rcon` reaches that server
+# when dedicated.toml lists several.
+first_server_name() {
+    awk '
+        /^[[:space:]]*\[\[[[:space:]]*server[[:space:]]*\]\]/ { if (seen++) exit; in_first = 1; next }
+        /^[[:space:]]*\[/ { if (in_first) exit; next }
+        in_first && /^[[:space:]]*name[[:space:]]*=[[:space:]]*"/ {
+            sub(/^[^=]*=[[:space:]]*"/, "")
+            sub(/".*$/, "")
+            print
+            exit
+        }
+    ' dedicated.toml
+}
+
+# Lines go through the server's own `dedicated rcon`, not gorcon's rcon-cli:
+# rcon-cli reads only the first reply packet, which cut long replies such as
+# `players` short. It also gets the console spot kept for this machine.
 console_bridge() {
-    local line password
+    local line name
+    local -a opts
     while IFS= read -r line; do
         line=${line%$'\r'}
         [ -n "${line//[[:space:]]/}" ] || continue
-        password=$(rcon_password)
-        if [ -z "$password" ]; then
+        if [ -z "$(rcon_password)" ]; then
             say "Console commands need an RCON password: set the RCON Password variable (8-128 characters) and restart."
             continue
         fi
-        if command -v rcon > /dev/null; then
-            rcon -a "127.0.0.1:${SERVER_PORT}" -p "$password" "$line" 2>&1 ||
-                say "RCON command failed. Is the server still starting?"
-        else
-            # shellcheck disable=SC2086 # split the line into the command's words
-            wine "$EXE" dedicated rcon $line 2>&1 || say "RCON command failed."
+        opts=()
+        name=$(first_server_name)
+        if [ -n "$name" ]; then
+            opts=(--server "$name")
         fi
+        # xargs splits the line into words and keeps "quoted names" whole.
+        printf '%s\n' "$line" | xargs wine "$EXE" dedicated rcon "${opts[@]}" 2>&1 ||
+            say "RCON command failed. Is the server still starting? Quote names with spaces in matching quotes."
     done
 }
 
@@ -147,6 +166,19 @@ if [ "${CONSOLE_RCON:-1}" = 1 ] && [ -n "${SERVER_PORT:-}" ]; then
     # A background job's stdin is /dev/null unless redirected explicitly.
     exec 3<&0
     console_bridge <&3 3<&- &
+fi
+# 6. Reserved slots for whitelisted players (reclaimer-reserved-slots.py),
+# kept over RCON beside the first server. Settings come from
+# reserved-slots.toml, and Reserved Slots variables override it.
+if { [ -z "${RESERVED_SLOTS:-}" ] && [ -f reserved-slots.toml ]; } ||
+    [ "${RESERVED_SLOTS:-0}" -gt 0 ] 2> /dev/null; then
+    if ! command -v python3 > /dev/null; then
+        say "Reserved slots need python3, which this image doesn't have."
+    elif [ ! -f reclaimer-reserved-slots.py ]; then
+        say "reclaimer-reserved-slots.py is missing: reinstall the server to get it."
+    else
+        python3 reclaimer-reserved-slots.py "$EXE" < /dev/null 3<&- &
+    fi
 fi
 # The server keeps the foreground (and PID for Ctrl+C) as before; the
 # console bridge, not the server, reads the panel's input.
