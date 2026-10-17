@@ -103,20 +103,20 @@ fi
 # remote console (Source RCON at 127.0.0.1:<its game port>), so it works
 # with RCON closed to the internet. Needs an RCON password.
 
-# The RCON Password variable, else [rcon] password from dedicated.toml.
+# The RCON Password variable, else the first [[server]]'s rcon_password,
+# else [rcon] password from dedicated.toml.
 rcon_password() {
     if [ -n "${RECLAIMER_DEDICATED_RCON_PASSWORD:-}" ]; then
         printf '%s' "$RECLAIMER_DEDICATED_RCON_PASSWORD"
         return
     fi
     awk '
-        /^[[:space:]]*\[/ { in_rcon = ($0 ~ /^[[:space:]]*\[[[:space:]]*rcon[[:space:]]*\][[:space:]]*(#.*)?$/); next }
-        in_rcon && /^[[:space:]]*password[[:space:]]*=[[:space:]]*"/ {
-            sub(/^[^=]*=[[:space:]]*"/, "")
-            sub(/".*$/, "")
-            print
-            exit
-        }
+        function value() { sub(/^[^=]*=[[:space:]]*"/, ""); sub(/".*$/, ""); return $0 }
+        /^[[:space:]]*\[\[[[:space:]]*server[[:space:]]*\]\]/ { servers++; in_rcon = 0; in_first = (servers == 1); next }
+        /^[[:space:]]*\[/ { in_first = 0; in_rcon = ($0 ~ /^[[:space:]]*\[[[:space:]]*rcon[[:space:]]*\][[:space:]]*(#.*)?$/); next }
+        in_first && /^[[:space:]]*rcon_password[[:space:]]*=[[:space:]]*"/ { own = value() }
+        in_rcon && /^[[:space:]]*password[[:space:]]*=[[:space:]]*"/ { shared = value() }
+        END { if (own != "") print own; else if (shared != "") print shared }
     ' dedicated.toml
 }
 
@@ -144,6 +144,14 @@ console_bridge() {
     while IFS= read -r line; do
         line=${line%$'\r'}
         [ -n "${line//[[:space:]]/}" ] || continue
+        if [[ "$line" =~ ^[[:space:]]*[Nn][Ee][Xx][Tt][Vv][Oo][Tt][Ee]([[:space:]]|$) ]]; then
+            if [ -f next-vote.toml ]; then
+                printf '%s\n' "$line" >> .next-vote-request
+            else
+                say "The next-game vote needs next-vote.toml beside dedicated.toml (see the egg's README)."
+            fi
+            continue
+        fi
         if [ -z "$(rcon_password)" ]; then
             say "Console commands need an RCON password: set the RCON Password variable (8-128 characters) and restart."
             continue
@@ -178,6 +186,18 @@ if { [ -z "${RESERVED_SLOTS:-}" ] && [ -f reserved-slots.toml ]; } ||
         say "reclaimer-reserved-slots.py is missing: reinstall the server to get it."
     else
         python3 reclaimer-reserved-slots.py "$EXE" < /dev/null 3<&- &
+    fi
+fi
+# 7. Next-game vote (reclaimer-next-vote.py): an admin starts it with
+# !nextvote in chat or nextvote in the panel console, players pick from
+# next-vote.toml, and the winner is queued with RCON nextmap.
+if [ -f next-vote.toml ]; then
+    if ! command -v python3 > /dev/null; then
+        say "The next-game vote needs python3, which this image doesn't have."
+    elif [ ! -f reclaimer-next-vote.py ]; then
+        say "reclaimer-next-vote.py is missing: reinstall the server to get it."
+    else
+        python3 reclaimer-next-vote.py "$EXE" < /dev/null 3<&- &
     fi
 fi
 # The server keeps the foreground (and PID for Ctrl+C) as before; the

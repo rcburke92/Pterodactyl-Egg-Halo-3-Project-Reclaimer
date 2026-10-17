@@ -1,5 +1,5 @@
-"""Builds egg-project-reclaimer.json from src/install.sh, src/start.sh and
-src/reserved_slots.py.
+"""Builds egg-project-reclaimer.json from src/install.sh, src/start.sh,
+src/reserved_slots.py and src/next_vote.py.
 
 Edit the scripts or the metadata below, then run:  python build_egg.py
 Import the resulting JSON in Pterodactyl under Admin > Nests > Import Egg.
@@ -64,9 +64,9 @@ VARIABLES = [
         "Max Players",
         "RECLAIMER_DEDICATED_MAX_PLAYERS",
         "",
-        "Default player limit, 1-63 (campaign co-op is always 16 at most). "
-        "Empty keeps dedicated.toml's setting (16 by default).",
-        "nullable|integer|between:1,63",
+        "Default player limit, 1-127, split-screen players included (a campaign "
+        "co-op server takes 16 at most). Empty keeps dedicated.toml's setting (16 by default).",
+        "nullable|integer|between:1,127",
     ),
     variable(
         "Admins",
@@ -132,6 +132,189 @@ VARIABLES = [
         FLAG,
     ),
     variable(
+        "Min Players",
+        "RECLAIMER_DEDICATED_MIN_PLAYERS",
+        "",
+        "Wait in the lobby until this many players are in: no playlist vote or "
+        "automatic start before that. 1 up to Max Players. Empty keeps dedicated.toml's "
+        "setting (1 by default).",
+        "nullable|integer|between:1,127",
+    ),
+    variable(
+        "Welcome Message",
+        "RECLAIMER_DEDICATED_WELCOME",
+        "",
+        "A chat line every player reads as they join, such as your rules or Discord. "
+        "{name} is the player's name, {server} the server's. Needs text chat. For "
+        "several lines use a list in dedicated.toml. Empty keeps dedicated.toml's setting.",
+        "nullable|string|max:300",
+    ),
+    variable(
+        "Friendly Fire",
+        "RECLAIMER_DEDICATED_FRIENDLY_FIRE",
+        "",
+        "false stops players hurting teammates and campaign co-op partners in every "
+        "game. true follows each game type's own rules. Empty keeps dedicated.toml's "
+        "setting (true).",
+        FLAG,
+    ),
+    variable(
+        "Team Changing",
+        "RECLAIMER_DEDICATED_TEAM_CHANGING",
+        "",
+        "How far players may change teams themselves: balanced (only to a team with "
+        "fewer players), game_type (as each game type allows) or off. Admins can always "
+        "move players. Empty keeps dedicated.toml's setting (balanced).",
+        "nullable|string|in:balanced,game_type,off",
+    ),
+    variable(
+        "Voice Chat",
+        "RECLAIMER_DEDICATED_VOICE",
+        "",
+        "false turns all voice chat off. Empty keeps dedicated.toml's setting (true).",
+        FLAG,
+    ),
+    variable(
+        "Global Voice",
+        "RECLAIMER_DEDICATED_VOICE_GLOBAL",
+        "",
+        "Global voice (V key). false with Team Voice false leaves only proximity chat. "
+        "Empty keeps dedicated.toml's setting (true).",
+        FLAG,
+    ),
+    variable(
+        "Team Voice",
+        "RECLAIMER_DEDICATED_VOICE_TEAM",
+        "",
+        "Team voice (B key). Empty keeps dedicated.toml's setting (true).",
+        FLAG,
+    ),
+    variable(
+        "Proximity Voice",
+        "RECLAIMER_DEDICATED_VOICE_PROXIMITY",
+        "",
+        "Proximity voice (N key). Empty keeps dedicated.toml's setting (true).",
+        FLAG,
+    ),
+    variable(
+        "Text Chat",
+        "RECLAIMER_DEDICATED_TEXT_CHAT",
+        "",
+        "true or false. Empty keeps dedicated.toml's setting (true).",
+        FLAG,
+    ),
+    variable(
+        "Chat Log",
+        "RECLAIMER_DEDICATED_CHAT_LOG",
+        "",
+        "Keep each server's text chat in data/<server>/chat, a file per day. Empty keeps "
+        "dedicated.toml's setting (true).",
+        FLAG,
+    ),
+    variable(
+        "Player Votes",
+        "RECLAIMER_DEDICATED_VOTES",
+        "",
+        "Let players vote to kick a player, end the round or end the game. Empty keeps "
+        "dedicated.toml's setting (true).",
+        FLAG,
+    ),
+    variable(
+        "Max Ping",
+        "RECLAIMER_DEDICATED_MAX_PING",
+        "",
+        "Turn away players whose ping is over this many milliseconds as they join "
+        "(checked only at the join), up to 1000. 0 takes everyone. Empty keeps "
+        "dedicated.toml's setting (0).",
+        "nullable|integer|between:0,1000",
+    ),
+    variable(
+        "Load Timeout",
+        "RECLAIMER_DEDICATED_LOAD_TIMEOUT",
+        "",
+        "Seconds one player's game may hold up the next game while it loads, before "
+        "that player is removed so the others can play. 0 waits as long as it takes. "
+        "Empty keeps dedicated.toml's setting (30).",
+        "nullable|integer|between:0,600",
+    ),
+    variable(
+        "Share Mods",
+        "RECLAIMER_DEDICATED_SHARE_MODS",
+        "",
+        "true lets players who lack a mod in content/Mods download it from the server. "
+        "Empty keeps dedicated.toml's setting (false).",
+        FLAG,
+    ),
+    variable(
+        "Share Rate",
+        "RECLAIMER_DEDICATED_SHARE_RATE",
+        "",
+        "Upload limit for shared mods per server, in Mbit/s. 0 is no limit. Empty keeps "
+        "dedicated.toml's setting (20).",
+        "nullable|integer|between:0,10000",
+    ),
+    variable(
+        "Trust Player Games",
+        "RECLAIMER_DEDICATED_TRUST_PLAYER_GAMES",
+        "",
+        "Campaign co-op: when every player's game goes out of step with the server's, "
+        "take one player's game instead of making everyone load the server's. Empty "
+        "keeps dedicated.toml's setting (true).",
+        FLAG,
+    ),
+    variable(
+        "VPN Lists",
+        "RECLAIMER_DEDICATED_VPN_LISTS",
+        "",
+        "More lists of networks Block VPNs refuses (https:// addresses or files, one IP "
+        "or range per line), separated by commas. Added to dedicated.toml's [vpn] lists; "
+        "include default to keep the default lists beside your own.",
+        "nullable|string|max:2048",
+    ),
+    variable(
+        "Stats Server",
+        "RECLAIMER_DEDICATED_STATS_SERVER",
+        "",
+        "Where finished games are reported for players' ranks: empty uses dedicated.toml "
+        "(the project's public service by default), off reports nowhere, or your own "
+        "service's https:// address.",
+        "nullable|string|max:253",
+    ),
+    variable(
+        "Character Mods",
+        "RECLAIMER_DEDICATED_CUSTOMIZATION",
+        "",
+        "Character mods (in content/Mods) whose characters every server's multiplayer "
+        "games add, by the names Customize shows, separated by commas: Armor Pack,Sci-Fi "
+        "Heroes. Added to dedicated.toml's. Needs all 27 multiplayer maps in game/.",
+        "nullable|string|max:2048",
+    ),
+    variable(
+        "Require Character Mods",
+        "RECLAIMER_DEDICATED_REQUIRE_CUSTOMIZATION",
+        "",
+        "true: players must accept the character mods to join. Empty keeps "
+        "dedicated.toml's setting (false).",
+        FLAG,
+    ),
+    variable(
+        "No Vanilla Characters",
+        "RECLAIMER_DEDICATED_NO_VANILLA_CHARACTERS",
+        "",
+        "true: every player plays one of the character mods' characters, never Halo 3's "
+        "own. Empty keeps dedicated.toml's setting (false).",
+        FLAG,
+    ),
+    variable(
+        "Auto Reload",
+        "RECLAIMER_DEDICATED_AUTO_RELOAD",
+        "",
+        "Apply saved edits to dedicated.toml, playlists and content while the servers run "
+        "(0.9.18 and later), without dropping players. false waits for the reload command "
+        "in the console. Empty keeps dedicated.toml's setting (true).",
+        FLAG,
+    ),
+    variable(
         "Auto Update",
         "RECLAIMER_DEDICATED_AUTO_UPDATE",
         "false",
@@ -187,7 +370,7 @@ VARIABLES = [
         "max_players. While the public slots are full the server needs the reserved "
         "password to join. 0 turns this off; empty uses reserved-slots.toml (off "
         "without one). Needs an RCON password.",
-        "nullable|integer|between:0,62",
+        "nullable|integer|between:0,126",
     ),
     variable(
         "Reserved Whitelist",
@@ -253,6 +436,13 @@ def build() -> dict:
     if "@@RESERVED_SLOTS_PY@@" not in install:
         raise SystemExit("src/install.sh is missing the @@RESERVED_SLOTS_PY@@ placeholder")
     install = install.replace("@@RESERVED_SLOTS_PY@@", slots.rstrip("\n"))
+
+    vote = read_script("next_vote.py")
+    if "\nNEXT_VOTE_PY\n" in f"\n{vote}\n":
+        raise SystemExit("src/next_vote.py must not contain a line reading NEXT_VOTE_PY")
+    if "@@NEXT_VOTE_PY@@" not in install:
+        raise SystemExit("src/install.sh is missing the @@NEXT_VOTE_PY@@ placeholder")
+    install = install.replace("@@NEXT_VOTE_PY@@", vote.rstrip("\n"))
 
     return {
         "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",

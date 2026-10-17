@@ -20,6 +20,11 @@ may hold at most M - R slots (split-screen guests count):
     can join again into that slot.
 Admins (dedicated.toml and the Admins variable) are always whitelisted.
 
+Like Project Reclaimer 0.9.18 servers, it takes up saved edits to
+dedicated.toml and reserved-slots.toml without a restart: a file that
+doesn't check out leaves the previous settings in place, and slots = 0
+opens the server and pauses until slots go up again.
+
 Settings come from reserved-slots.toml beside dedicated.toml (the Server
 Manager writes it), and an egg variable that isn't empty overrides its key,
 like the RECLAIMER_DEDICATED_* variables do for dedicated.toml:
@@ -73,6 +78,14 @@ def fail(message):
     sys.exit(1)
 
 
+class SettingsError(Exception):
+    """dedicated.toml or reserved-slots.toml doesn't work for reserved slots."""
+
+
+def problem(message):
+    raise SettingsError(message)
+
+
 def split_list(text):
     return [item.strip() for item in re.split(r"[,\s]+", text or "") if item.strip()]
 
@@ -90,7 +103,7 @@ class Settings:
         try:
             self.reserved = int(env("RESERVED_SLOTS") or own.get("slots", 0))
         except (TypeError, ValueError):
-            fail("Reserved Slots (slots) must be a number")
+            problem("Reserved Slots (slots) must be a number")
         if self.reserved <= 0:
             return
 
@@ -101,7 +114,7 @@ class Settings:
 
         rcon_password = env("RECLAIMER_DEDICATED_RCON_PASSWORD") or server.get("rcon_password") or toml.get("rcon", {}).get("password")
         if not rcon_password:
-            fail("reserved slots need an RCON password: set the RCON Password variable or [rcon] password")
+            problem("reserved slots need an RCON password: set the RCON Password variable or [rcon] password")
 
         # A [[server]] value beats the Max Players variable, which beats [defaults].
         if "max_players" in server:
@@ -116,15 +129,15 @@ class Settings:
         else:
             own_password = env("RECLAIMER_DEDICATED_PASSWORD") or defaults.get("password", "")
         if own_password:
-            fail("the server already has a join password; reserved slots need it empty, since they set one only while the server is full")
+            problem("the server already has a join password; reserved slots need it empty, since they set one only while the server is full")
 
         self.public = self.max_players - self.reserved
         if self.public < 1:
-            fail(f"{self.reserved} reserved slots leave no public slots with max_players = {self.max_players}")
+            problem(f"{self.reserved} reserved slots leave no public slots with max_players = {self.max_players}")
 
         self.password = env("RESERVED_PASSWORD") or str(own.get("password", ""))
         if not self.password or re.search(r"\s", self.password) or len(self.password) > 128:
-            fail("set the reserved password: up to 128 characters, no spaces")
+            problem("set the reserved password: up to 128 characters, no spaces")
 
         bump = env("RESERVED_BUMP").lower() or own.get("bump", False)
         self.bump = bump is True or bump == "true"
@@ -132,7 +145,7 @@ class Settings:
         self.bump_order = split_list(order) if order else list(own.get("bump_order") or DEFAULT_BUMP_ORDER)
         unknown = [str(rule) for rule in self.bump_order if rule not in BUMP_RULES]
         if unknown:
-            fail(f"unknown bump order rule {', '.join(unknown)} (use {', '.join(BUMP_RULES)})")
+            problem(f"unknown bump order rule {', '.join(unknown)} (use {', '.join(BUMP_RULES)})")
 
         admins = list(toml.get("admins", [])) + list(server.get("admins", []))
         admins += split_list(env("RECLAIMER_DEDICATED_ADMINS"))
@@ -150,7 +163,7 @@ class Settings:
             with open(path, "rb") as f:
                 return tomllib.load(f)
         except (OSError, tomllib.TOMLDecodeError) as e:
-            fail(f"could not read {path} ({e})")
+            problem(f"could not read {path} ({e})")
 
 
 # ---- RCON -------------------------------------------------------------------
@@ -238,6 +251,8 @@ class SlotKeeper:
         self.s = settings
         self.rcon = rcon
         self.locked = None          # unknown until set
+        self.active = True          # False while slots = 0
+        self.watch_proc = None      # the `dedicated rcon --watch` follow_events reads
         self.hold_until = 0.0
         self.joined = {}            # player ID -> when first seen this visit
         self.arrival = {}           # player ID -> order first seen, newest highest
@@ -246,6 +261,12 @@ class SlotKeeper:
         self.totals = self.load_totals()
         self.last_tick = time.monotonic()
         self.last_save = self.last_tick
+
+    def stop_watch(self):
+        """End the event stream, so follow_events starts one with the current RCON."""
+        proc = self.watch_proc
+        if proc and proc.poll() is None:
+            proc.terminate()
 
     # Playtime ---------------------------------------------------------------
 
@@ -370,11 +391,11 @@ class SlotKeeper:
 
 # ---- main loop --------------------------------------------------------------
 
-def follow_events(rcon, whitelist, inbox):
+def follow_events(keeper, inbox):
     """Feeds the main loop from `dedicated rcon --watch`, restarting it if it ends."""
     while True:
         try:
-            proc = rcon.watch()
+            proc = keeper.watch_proc = keeper.rcon.watch()
             for line in proc.stdout:
                 text = line.strip()
                 if not text:
@@ -383,14 +404,15 @@ def follow_events(rcon, whitelist, inbox):
                 try:
                     event = json.loads(text)
                     if isinstance(event, dict):
-                        kind = str(event.get("type") or event.get("event") or event.get("kind") or kind).lower()
+                        # Lines read {"type": "event", "event": "join", ...}: the kind is "event".
+                        kind = str(event.get("event") or event.get("kind") or event.get("type") or kind).lower()
                 except json.JSONDecodeError:
                     pass
                 if not any(word in kind for word in EVENT_WORDS):
                     continue
                 if "refus" in kind:
                     for pid in ID_RE.findall(text):
-                        if pid.lower() in whitelist:
+                        if pid.lower() in keeper.s.whitelist:
                             inbox.put(("refused", pid.lower()))
                 inbox.put(("changed", None))
             proc.wait()
@@ -399,24 +421,78 @@ def follow_events(rcon, whitelist, inbox):
         time.sleep(RETRY_SECONDS)
 
 
+def config_stamp():
+    """When dedicated.toml and reserved-slots.toml last changed."""
+    stamp = []
+    for path in (Path("dedicated.toml"), SETTINGS_FILE):
+        try:
+            stamp.append(path.stat().st_mtime_ns)
+        except OSError:
+            stamp.append(0)
+    return tuple(stamp)
+
+
+def load_settings(first):
+    """New settings, or None (saying why) when the files don't work for reserved slots."""
+    try:
+        return Settings()
+    except SettingsError as e:
+        keep = "Reserved slots are off" if first else "Keeping the previous settings"
+        say(f"Error: {e}. {keep} until dedicated.toml or reserved-slots.toml is fixed.")
+        return None
+
+
+def apply_settings(fresh, keeper, exe, inbox):
+    """Start the keeper, or switch it to new settings. Returns it (None while off from the start)."""
+    if fresh.reserved <= 0:
+        if keeper is not None and keeper.active:
+            keeper.active = False
+            keeper.set_lock(False)
+        say("Reserved slots are off (slots = 0).")
+        return keeper
+    if keeper is None:
+        keeper = SlotKeeper(fresh, Rcon(exe, fresh.server_name))
+        threading.Thread(target=follow_events, args=(keeper, inbox), daemon=True).start()
+    else:
+        old = keeper.s
+        keeper.s = fresh
+        keeper.active = True
+        if fresh.server_name != old.server_name:
+            # Another first server: talk to it from now on.
+            keeper.rcon = Rcon(exe, fresh.server_name)
+            keeper.locked = None
+            keeper.stop_watch()
+        elif keeper.locked and fresh.password != old.password:
+            keeper.locked = None  # set the new password at the next check
+    say(f"{fresh.reserved} of {fresh.max_players} slots reserved for "
+        f"{len(fresh.whitelist)} whitelisted player(s); bumping "
+        f"{'on (' + ', '.join(fresh.bump_order) + ')' if fresh.bump else 'off'}.")
+    return keeper
+
+
 def main():
     if len(sys.argv) != 2:
         fail("usage: reclaimer-reserved-slots.py <path to project-reclaimer.exe>")
-    settings = Settings()
-    if settings.reserved <= 0:
-        return
-    rcon = Rcon(sys.argv[1], settings.server_name)
-    keeper = SlotKeeper(settings, rcon)
-
-    say(f"{settings.reserved} of {settings.max_players} slots reserved for "
-        f"{len(settings.whitelist)} whitelisted player(s); bumping "
-        f"{'on (' + ', '.join(settings.bump_order) + ')' if settings.bump else 'off'}.")
-
+    exe = sys.argv[1]
     inbox = queue.Queue()
-    threading.Thread(target=follow_events, args=(rcon, settings.whitelist, inbox), daemon=True).start()
+    keeper = None
+    stamp = None
 
     down = False
     while True:
+        # Saved edits apply without a restart, as they do on the server.
+        now_stamp = config_stamp()
+        if now_stamp != stamp:
+            first = stamp is None
+            stamp = now_stamp
+            fresh = load_settings(first)
+            if fresh is not None:
+                if not first:
+                    say("Settings changed.")
+                keeper = apply_settings(fresh, keeper, exe, inbox)
+        if keeper is None or not keeper.active:
+            time.sleep(POLL_SECONDS)
+            continue
         try:
             refused = set()
             try:

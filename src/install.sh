@@ -85,6 +85,9 @@ contents of C:\reclaimer\game into this folder over SFTP, keeping the folders:
     game/halo3/maps/<the multiplayer maps you host>.map
     ...
 
+For campaign co-op servers, add the missions: --maps "Guardian,campaign" copies
+every one of them (about 4 GB) with the files they need.
+
 For the Flood Infection mode, also upload halo3/maps/050_floodvoi.map from the
 game's folder. dedicated init doesn't copy it and dedicated check doesn't ask
 for it, but without it a Flood Infection game fails to load.
@@ -101,5 +104,9 @@ chmod +x reclaimer-start.sh
 cat > reclaimer-reserved-slots.py << 'RESERVED_SLOTS_PY'
 @@RESERVED_SLOTS_PY@@
 RESERVED_SLOTS_PY
+
+cat > reclaimer-next-vote.py << 'NEXT_VOTE_PY'
+@@NEXT_VOTE_PY@@
+NEXT_VOTE_PY
 
 say "Done. Start the server; on first start it creates dedicated.toml, then waits for Halo 3's files in game/."
